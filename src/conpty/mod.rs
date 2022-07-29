@@ -4,6 +4,7 @@ mod bind;
 pub mod thread;
 #[cfg(unix)]
 mod unix;
+mod utmpx;
 #[cfg(windows)]
 mod windows;
 
