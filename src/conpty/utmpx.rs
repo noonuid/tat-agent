@@ -1,37 +1,117 @@
-use libc::{self, __exit_status, __timeval, utmpx};
+// ? remove
+// #[cfg(not(any(
+//     target_arch = "aarch64",
+//     target_arch = "s390x",
+//     target_arch = "loongarch64",
+//     all(target_pointer_width = "32", not(target_arch = "x86_64"))
+// )))]
+// use libc::__timeval;
+// #[cfg(any(
+//     target_arch = "aarch64",
+//     target_arch = "s390x",
+//     target_arch = "loongarch64",
+//     all(target_pointer_width = "32", not(target_arch = "x86_64"))
+// ))]
+// use libc::timeval;
+// use libc::__exit_status;
+use libc::{self, c_char, c_int, c_short, pid_t};
 use std::convert::TryFrom;
 use std::ffi::CString;
 use std::mem;
 use std::net::{self, IpAddr};
 use time::{Duration, OffsetDateTime};
 
-pub static DEFAULT_FILE: &str = "/var/run/utmp\0";
+pub const EMPTY: c_short = 0;
+pub const RUN_LVL: c_short = 1;
+pub const BOOT_TIME: c_short = 2;
+pub const NEW_TIME: c_short = 3;
+pub const OLD_TIME: c_short = 4;
+pub const INIT_PROCESS: c_short = 5;
+pub const LOGIN_PROCESS: c_short = 6;
+pub const USER_PROCESS: c_short = 7;
+pub const DEAD_PROCESS: c_short = 8;
+pub const ACCOUNTING: c_short = 9;
+
+// pub const _PATH_UTMP: &str = "/dev/null/utmp\0";
+pub const _PATH_UTMP: &str = "/var/run/utmp\0";
+pub const _PATH_WTMP: &str = "/var/log/wtmp\0";
+pub const FD_PATH: &str = "/proc/self/fd/";
+pub const DEFAULT_DEVICE: &str = "/dev/pts/100";
+
+#[repr(C)]
+// #[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy)]
+pub struct exit_status {
+    pub e_termination: c_short,
+    pub e_exit: c_short,
+}
+
+#[repr(C)]
+// #[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy)]
+pub struct timeval {
+    pub tv_sec: i32,
+    pub tv_usec: i32,
+}
+
+#[repr(C)]
+// #[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy)]
+pub struct utmpx {
+    pub ut_type: c_short,
+    pub ut_pid: pid_t,
+    pub ut_line: [c_char; 32],
+    pub ut_id: [c_char; 4],
+
+    pub ut_user: [c_char; 32],
+    pub ut_host: [c_char; 256],
+    pub ut_exit: exit_status,
+
+    pub ut_session: i32,
+    pub ut_tv: timeval,
+
+    pub ut_addr_v6: [i32; 4],
+    __unused: [c_char; 20],
+}
+
+extern "C" {
+    // pub fn utmpname(file: *const c_char) -> c_int;
+    pub fn utmpxname(file: *const c_char) -> c_int;
+    pub fn getutxent() -> *mut utmpx;
+    pub fn getutxid(ut: *const utmpx) -> *mut utmpx;
+    pub fn getutxline(ut: *const utmpx) -> *mut utmpx;
+    pub fn pututxline(ut: *const utmpx) -> *mut utmpx;
+    pub fn setutxent();
+    pub fn endutxent();
+
+    pub fn updwtmpx(file: *const c_char, ut: *const utmpx);
+}
 
 #[repr(i16)]
 #[derive(Debug, Clone, Copy)]
 pub enum UtmpxType {
     // No valid user accounting information.
-    Empty = 0,
+    Empty = EMPTY,
 
     // The system's runlevel.
-    RunLvl = 1,
+    RunLvl = RUN_LVL,
     // Time of a system boot.
-    BootTime = 2,
+    BootTime = BOOT_TIME,
     // Time after system clock change.
-    NewTime = 3,
+    NewTime = NEW_TIME,
     // Time when system clock changed.
-    OldTime = 4,
+    OldTime = OLD_TIME,
 
     // Process spawned by the init process.
-    InitProcess = 5,
+    InitProcess = INIT_PROCESS,
     // Session leader of a logged in user.
-    LoginProcess = 6,
+    LoginProcess = LOGIN_PROCESS,
     // Normal process.
-    UserProcess = 7,
+    UserProcess = USER_PROCESS,
     // Terminated process.
-    DeadProcess = 8,
+    DeadProcess = DEAD_PROCESS,
 
-    Accounting = 9,
+    Accounting = ACCOUNTING,
 }
 
 impl TryFrom<i16> for UtmpxType {
@@ -64,6 +144,8 @@ pub struct ExitStatus {
     e_exit: i16,
 }
 
+// ? remove
+// #[cfg(all(target_os = "linux", not(target_arch = "i686")))]
 #[derive(Debug, Clone, Copy)]
 pub struct TimeVal {
     // Seconds.
@@ -71,6 +153,15 @@ pub struct TimeVal {
     // Microseconds.
     tv_usec: i32,
 }
+// ? remove
+// #[cfg(all(target_os = "linux", any(target_arch = "i686")))]
+// #[derive(Debug, Clone, Copy)]
+// pub struct TimeVal {
+//     // Seconds.
+//     tv_sec: i32,
+//     // Microseconds.
+//     tv_usec: i32,
+// }
 
 pub fn str2i8s<const N: usize>(s: &str) -> [i8; N] {
     let mut chars = [0i8; N];
@@ -88,12 +179,6 @@ pub fn str2i8s<const N: usize>(s: &str) -> [i8; N] {
 }
 
 pub fn i8s2cstring<const N: usize>(i8s: &[i8; N]) -> CString {
-    // match i8s.iter().position(|b| *b == 0) {
-    //     // This is safe because we manually located the first zero byte above.
-    //     Some(pos) => unsafe { CString::from_raw((&mut i8s[..=pos]).as_mut_ptr()) },
-    //     // This is safe because we manually generated this string.
-    //     None => unsafe { CString::from_raw(([0i8]).as_mut_ptr()) },
-    // }
     let s = i8s
         .iter()
         .take_while(|i| **i > 0)
@@ -132,10 +217,24 @@ pub struct Utmpx {
 }
 
 impl Utmpx {
-    // Get the type kind if the entry.
+    // Get the type desciption of the entry.
     #[inline]
-    pub fn ut_type(&self) -> UtmpxType {
-        self.ut_type
+    pub fn ut_type_desc(&self) -> &str {
+        match self.ut_type {
+            UtmpxType::Empty => "EMPTY",
+
+            UtmpxType::RunLvl => "RUN_LVL",
+            UtmpxType::BootTime => "BOOT_TIME",
+            UtmpxType::NewTime => "NEW_TIME",
+            UtmpxType::OldTime => "OLD_TIME",
+
+            UtmpxType::InitProcess => "INIT_PROCESS",
+            UtmpxType::LoginProcess => "LOGIN_PROCESS",
+            UtmpxType::UserProcess => "USER_PROCESS",
+            UtmpxType::DeadProcess => "DEAD_PROCESS",
+
+            UtmpxType::Accounting => "ACCOUNTING",
+        }
     }
 
     // Get the process ID.
@@ -168,10 +267,11 @@ impl Utmpx {
         self.ut_host.to_str().unwrap()
     }
 
-    #[inline]
-    pub fn ut_exit(&self) -> ExitStatus {
-        self.ut_exit
-    }
+    // ? remove
+    // #[inline]
+    // pub fn ut_exit(&self) -> ExitStatus {
+    //     self.ut_exit
+    // }
 
     // Get the session ID of the entry.
     #[inline]
@@ -179,10 +279,19 @@ impl Utmpx {
         self.ut_session
     }
 
+    // ? remove
     // Get the time where the entry was created. (often login time)
+    // #[inline]
+    // pub const fn ut_tv(&self) -> TimeVal {
+    //     self.ut_tv
+    // }
+
+    // Get the time where the entry was created (often login time) in a more complete
+    // structure.
     #[inline]
-    pub const fn ut_tv(&self) -> TimeVal {
-        self.ut_tv
+    pub fn login_time(&self) -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(self.ut_tv.tv_sec as i64)
+            + Duration::microseconds(self.ut_tv.tv_usec as i64)
     }
 
     // Get the IP address of the entry.
@@ -204,14 +313,6 @@ impl Utmpx {
             }
         }
     }
-
-    // Get the time where the entry was created (often login time) in a more complete
-    // structure.
-    #[inline]
-    pub fn login_time(&self) -> OffsetDateTime {
-        OffsetDateTime::from_unix_timestamp(self.ut_tv.tv_sec as i64)
-            + Duration::microseconds(self.ut_tv.tv_usec as i64)
-    }
 }
 
 impl From<utmpx> for Utmpx {
@@ -228,10 +329,18 @@ impl From<utmpx> for Utmpx {
             e_exit: c_utmpx.ut_exit.e_exit,
         };
 
+        // ? remove
+        // #[cfg(all(target_os = "linux", not(target_arch = "i686")))]
         let ut_tv = TimeVal {
             tv_sec: c_utmpx.ut_tv.tv_sec,
             tv_usec: c_utmpx.ut_tv.tv_usec,
         };
+        // ? remove
+        // #[cfg(all(target_os = "linux", any(target_arch = "i686")))]
+        // let ut_tv = TimeVal {
+        //     tv_sec: c_utmpx.ut_tv.tv_sec,
+        //     tv_usec: c_utmpx.ut_tv.tv_usec,
+        // };
 
         Utmpx {
             ut_type,
@@ -254,15 +363,33 @@ impl From<Utmpx> for utmpx {
     // Converts [`Utmpx`] to [`utmpx`].
     #[inline]
     fn from(u: Utmpx) -> Self {
-        let ut_exit = __exit_status {
-            e_termination: u.ut_exit().e_termination,
-            e_exit: u.ut_exit().e_exit,
+        let ut_exit = exit_status {
+            e_termination: u.ut_exit.e_termination,
+            e_exit: u.ut_exit.e_exit,
         };
 
-        let ut_tv = __timeval {
-            tv_sec: u.ut_tv().tv_sec,
-            tv_usec: u.ut_tv().tv_usec,
+        // ? remove
+        // #[cfg(any(
+        //     target_arch = "aarch64",
+        //     target_arch = "s390x",
+        //     target_arch = "loongarch64",
+        //     all(target_pointer_width = "32", not(target_arch = "x86_64"))
+        // ))]
+        let ut_tv = timeval {
+            tv_sec: u.ut_tv.tv_sec,
+            tv_usec: u.ut_tv.tv_usec,
         };
+        // ? remove
+        // #[cfg(not(any(
+        //     target_arch = "aarch64",
+        //     target_arch = "s390x",
+        //     target_arch = "loongarch64",
+        //     all(target_pointer_width = "32", not(target_arch = "x86_64"))
+        // )))]
+        // let ut_tv = __timeval {
+        //     tv_sec: u.ut_tv().tv_sec,
+        //     tv_usec: u.ut_tv().tv_usec,
+        // };
 
         let mut ut: utmpx;
         unsafe {
@@ -287,6 +414,7 @@ impl From<Utmpx> for utmpx {
 }
 
 pub struct LoginContext {
+    // ? remove
     // pid: i32,
     // // device path of tty
     // tty_path: CString,
@@ -340,43 +468,18 @@ impl LoginContext {
         }
     }
 
-    pub fn login_simple(&self) {
-        unsafe {
-            let ut_type = libc::USER_PROCESS;
-            let ut_pid = libc::getpid();
-            let ut_line: [i8; 32] = str2i8s("pts/200");
-            let ut_id: [i8; 4] = str2i8s("/200");
-
-            let ut_user: [i8; 32] = str2i8s("root");
-            let ut_host: [i8; 256] = str2i8s("127.0.0.1");
-
-            let mut ut: utmpx = mem::zeroed();
-
-            ut.ut_type = ut_type;
-            ut.ut_pid = ut_pid;
-            ut.ut_line = ut_line;
-            ut.ut_id = ut_id;
-
-            ut.ut_user = ut_user;
-            ut.ut_host = ut_host;
-
-            libc::pututxline(&ut);
-            libc::endutxent();
-        }
-    }
-
     pub fn login(&self) {
         unsafe {
             let mut ut: utmpx = mem::zeroed();
             let mut ut_iter: *mut utmpx;
 
-            // let file = DEFAULT_FILE.as_ptr() as *const i8;
             // /* Tell that we want to use the UTMP file.  */
-            // if libc::utmpxname(file) == -1 {
-            //     return;
-            // }
+            let file = _PATH_UTMP.as_ptr() as *const c_char;
+            if utmpxname(file) == -1 {
+                return;
+            }
 
-            libc::setutxent();
+            setutxent();
 
             /* Find pid in utmp.
              *
@@ -387,13 +490,13 @@ impl LoginContext {
              * -- Michael Riepe <michael@stud.uni-hannover.de>
              */
             loop {
-                ut_iter = libc::getutxent();
+                ut_iter = getutxent();
                 if ut_iter.is_null() {
                     break;
                 }
                 if (*ut_iter).ut_pid == self.utmpx.ut_pid()
-                    && (*ut_iter).ut_type >= libc::INIT_PROCESS
-                    && (*ut_iter).ut_type <= libc::DEAD_PROCESS
+                    && (*ut_iter).ut_type >= INIT_PROCESS
+                    && (*ut_iter).ut_type <= DEAD_PROCESS
                 {
                     break;
                 }
@@ -402,19 +505,19 @@ impl LoginContext {
             /* If we can't find a pre-existing entry by pid, try by line.
              * BSD network daemons may rely on this. */
             if ut_iter.is_null() && !self.utmpx.ut_line().is_empty() {
-                libc::setutxent();
-                ut.ut_type = libc::LOGIN_PROCESS;
+                setutxent();
+                ut.ut_type = LOGIN_PROCESS;
                 ut.ut_line = str2i8s(self.utmpx.ut_line());
-                ut_iter = libc::getutxline(&ut);
+                ut_iter = getutxline(&ut);
             }
 
             /* If we can't find a pre-existing entry by pid and line, try it by id.
              * Very stupid telnetd daemons don't set up utmp at all. (kzak) */
             if ut_iter.is_null() && !self.utmpx.ut_id().is_empty() {
-                libc::setutxent();
-                ut.ut_type = libc::DEAD_PROCESS;
+                setutxent();
+                ut.ut_type = DEAD_PROCESS;
                 ut.ut_id = str2i8s(self.utmpx.ut_id());
-                ut_iter = libc::getutxid(&ut);
+                ut_iter = getutxid(&ut);
             }
 
             if !ut_iter.is_null() {
@@ -437,40 +540,17 @@ impl LoginContext {
             let now = OffsetDateTime::now_utc();
             ut.ut_tv.tv_sec = now.unix_timestamp() as i32;
             ut.ut_tv.tv_usec = now.microsecond() as i32;
-            ut.ut_type = libc::USER_PROCESS;
+            ut.ut_type = USER_PROCESS;
             ut.ut_pid = self.utmpx.ut_pid();
             if !self.utmpx.ut_host().is_empty() {
                 ut.ut_host = str2i8s(self.utmpx.ut_host());
                 ut.ut_addr_v6 = self.utmpx.ut_addr_v6;
             }
 
-            libc::pututxline(&ut);
-            libc::endutxent();
-        }
-    }
+            pututxline(&ut);
+            endutxent();
 
-    pub fn logout_simple(&self) {
-        unsafe {
-            let ut_type = libc::DEAD_PROCESS;
-            let ut_pid = libc::getpid();
-            let ut_line: [i8; 32] = str2i8s("pts/200");
-            let ut_id: [i8; 4] = str2i8s("/200");
-
-            let ut_user: [i8; 32] = str2i8s("");
-            let ut_host: [i8; 256] = str2i8s("");
-
-            let mut ut: utmpx = mem::zeroed();
-
-            ut.ut_type = ut_type;
-            ut.ut_pid = ut_pid;
-            ut.ut_line = ut_line;
-            ut.ut_id = ut_id;
-
-            ut.ut_user = ut_user;
-            ut.ut_host = ut_host;
-
-            libc::pututxline(&ut);
-            libc::endutxent();
+            updwtmpx(_PATH_WTMP.as_ptr() as *const c_char, &ut);
         }
     }
 
@@ -479,20 +559,20 @@ impl LoginContext {
             let mut tmp: utmpx = mem::zeroed();
             let ut: *mut utmpx;
 
-            let file = DEFAULT_FILE.as_ptr() as *const i8;
+            let file = _PATH_UTMP.as_ptr() as *const c_char;
             /* Tell that we want to use the UTMP file.  */
-            if libc::utmpxname(file) == -1 {
+            if utmpxname(file) == -1 {
                 return;
             }
 
             /* Open UTMP file.  */
-            libc::setutxent();
+            setutxent();
 
             /* Fill in search information.  */
-            tmp.ut_type = libc::USER_PROCESS;
+            tmp.ut_type = USER_PROCESS;
             tmp.ut_line = str2i8s(self.utmpx.ut_line());
 
-            ut = libc::getutxline(&tmp);
+            ut = getutxline(&tmp);
             /* Read the record.  */
             if !ut.is_null() {
                 /* Clear information about who & from where.  */
@@ -503,20 +583,65 @@ impl LoginContext {
                 (*ut).ut_tv.tv_sec = now.unix_timestamp() as i32;
                 (*ut).ut_tv.tv_usec = now.microsecond() as i32;
 
-                (*ut).ut_type = libc::DEAD_PROCESS;
+                (*ut).ut_type = DEAD_PROCESS;
 
-                libc::pututxline(ut);
+                pututxline(ut);
             }
 
             /* Close UTMP file.  */
-            libc::endutxent();
+            endutxent();
         }
+    }
+}
+
+#[allow(unused)]
+pub fn get_all_entry() {
+    unsafe {
+        let mut u: *const utmpx;
+
+        println!(
+            "{:13} {:7} {:7} {:5} {:8} {:24} {:10} {:29} {:22}",
+            "ut_type",
+            "ut_pid",
+            "ut_line",
+            "ut_id",
+            "ut_user",
+            "ut_host",
+            "ut_session",
+            "ut_time",
+            "ut_addr"
+        );
+        setutxent();
+        let mut count = 0;
+        loop {
+            u = getutxent();
+            if u.is_null() {
+                break;
+            }
+
+            let u_tmp = Utmpx::from(*u);
+            println!(
+                "{:13} {:7} {:7} {:5} {:8} {:24} {:10} {:29} {:22}",
+                u_tmp.ut_type_desc(),
+                u_tmp.ut_pid,
+                u_tmp.ut_line(),
+                u_tmp.ut_id(),
+                u_tmp.ut_user(),
+                u_tmp.ut_host(),
+                u_tmp.ut_session(),
+                u_tmp.login_time().to_string(),
+                u_tmp.ut_addr_v6(),
+            );
+            count += 1;
+        }
+        endutxent();
+        println!("total: {}", count);
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{i8s2cstring, str2i8s, LoginContext};
+    use super::{get_all_entry, i8s2cstring, str2i8s, LoginContext};
     use std::{process, thread, time};
 
     #[test]
@@ -536,6 +661,24 @@ mod test {
     }
 
     #[test]
+    fn test_login() {
+        let pid = process::id() as i32;
+        let lc = LoginContext::new(pid, "/dev/pts/200", "root", "127.0.0.1");
+
+        lc.login();
+
+        thread::sleep(time::Duration::from_secs(20));
+    }
+
+    #[test]
+    fn test_logout() {
+        let pid = process::id() as i32;
+        let lc = LoginContext::new(pid, "/dev/pts/200", "root", "127.0.0.1");
+
+        lc.logout();
+    }
+
+    #[test]
     fn test_login_and_logout() {
         let pid = process::id() as i32;
         let lc = LoginContext::new(pid, "/dev/pts/200", "root", "127.0.0.1");
@@ -548,40 +691,7 @@ mod test {
     }
 
     #[test]
-    fn test_login_simple() {
-        let pid = process::id() as i32;
-        let lc = LoginContext::new(pid, "/dev/pts/200", "root", "127.0.0.1");
-
-        lc.login_simple();
-
-        thread::sleep(time::Duration::from_secs(20));
-
-        lc.logout();
-    }
-
-    #[test]
-    fn test_login() {
-        let pid = process::id() as i32;
-        let lc = LoginContext::new(pid, "/dev/pts/200", "root", "127.0.0.1");
-
-        lc.login();
-
-        thread::sleep(time::Duration::from_secs(20));
-    }
-
-    #[test]
-    fn test_logout_simple() {
-        let pid = process::id() as i32;
-        let lc = LoginContext::new(pid, "/dev/pts/200", "root", "127.0.0.1");
-
-        lc.logout_simple();
-    }
-
-    #[test]
-    fn test_logout() {
-        let pid = process::id() as i32;
-        let lc = LoginContext::new(pid, "/dev/pts/200", "root", "127.0.0.1");
-
-        lc.logout();
+    fn test_get_all_entry() {
+        get_all_entry();
     }
 }

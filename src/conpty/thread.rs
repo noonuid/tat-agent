@@ -4,7 +4,6 @@ use crate::common::consts::{
     WS_MSG_TYPE_PTY_RESIZE, WS_MSG_TYPE_PTY_START, WS_MSG_TYPE_PTY_STOP,
 };
 use crate::common::evbus::EventBus;
-use crate::conpty::utmpx::LoginContext;
 use crate::conpty::{PtySession, PtySystem};
 
 use crate::types::ws_msg::{PtyError, PtyInput, PtyReady, PtyResize, PtyStop, WsMsg};
@@ -167,10 +166,6 @@ impl SessionManager {
         self.runtime
             .spawn(async move { self_0.report_output(session).await });
 
-        let pid = std::process::id() as i32;
-        let lc = LoginContext::new(pid, "/dev/pts/200", &user_name, "127.0.0.1");
-        lc.login();
-
         info!("handle_pty_start success");
     }
 
@@ -276,10 +271,6 @@ impl SessionManager {
 
     fn remove_session(&self, session_id: &str) {
         if let Some(session) = self.session_map.write().unwrap().remove(session_id) {
-            let pid = std::process::id() as i32;
-            let lc = LoginContext::new(pid, "/dev/pts/200", "root", "127.0.0.1");
-            lc.logout();
-
             info!("remove_session  {} removed", session_id);
             session.is_stoped.store(true, SeqCst);
             self.running_task_num.fetch_sub(1, Ordering::SeqCst);

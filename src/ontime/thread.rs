@@ -122,22 +122,24 @@ fn check_ontime_update(
     self_updating: &Arc<AtomicBool>,
     need_restart: &Arc<AtomicBool>,
 ) {
-    if !check_interval_elapsed(instant_update, ONTIME_UPDATE_INTERVAL) {
-        return;
-    }
+    return;
 
-    if self_updating.fetch_or(true, Ordering::SeqCst) {
-        return;
-    }
+    // if !check_interval_elapsed(instant_update, ONTIME_UPDATE_INTERVAL) {
+    //     return;
+    // }
 
-    info!("start check self update");
-    let self_updating_clone = self_updating.clone();
-    let need_restart_clone = need_restart.clone();
-    thread::Builder::new()
-        .spawn(move || {
-            try_update(self_updating_clone, need_restart_clone);
-        })
-        .ok();
+    // if self_updating.fetch_or(true, Ordering::SeqCst) {
+    //     return;
+    // }
+
+    // info!("start check self update");
+    // let self_updating_clone = self_updating.clone();
+    // let need_restart_clone = need_restart.clone();
+    // thread::Builder::new()
+    //     .spawn(move || {
+    //         try_update(self_updating_clone, need_restart_clone);
+    //     })
+    //     .ok();
 }
 
 fn check_running_task_num(

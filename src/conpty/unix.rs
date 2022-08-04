@@ -2,14 +2,17 @@ use super::{PtySession, PtySystem};
 use crate::common::consts::{
     self, BASH_PREEXC, BLOCK_INIT, COREOS_BASH_PREEXC, COREOS_BLOCK_INIT, PTY_FLAG_INIT_BLOCK,
 };
+use crate::conpty::utmpx::{LoginContext, DEFAULT_DEVICE, FD_PATH};
 use crate::executor::proc::BaseCommand;
 use crate::executor::shell_command::{build_envs, cmd_path};
 use libc::{self, waitpid, winsize};
 use log::{error, info};
+use std::fs::read_link;
 use std::fs::{create_dir_all, read_to_string, set_permissions, write, File, Permissions};
 use std::io::Write;
 use std::os::unix::prelude::{AsRawFd, CommandExt, FromRawFd, PermissionsExt, RawFd};
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
@@ -20,6 +23,7 @@ use users::User;
 
 struct Inner {
     master: File,
+    slave: File,
     child: Child,
 }
 
@@ -94,8 +98,8 @@ impl PtySystem for ConPtySystem {
         }
         let child = cmd
             .args(["--login"])
-            .uid(user.uid())
-            .gid(user.primary_group_id())
+            .uid(0)
+            .gid(0)
             .stdin(slave.try_clone().unwrap())
             .stdout(slave.try_clone().unwrap())
             .stderr(slave.try_clone().unwrap())
@@ -108,8 +112,20 @@ impl PtySystem for ConPtySystem {
             let _ = master.write(init_block.as_bytes());
         }
 
+        let pid = child.id() as i32;
+        let path_buf = PathBuf::from(format!("{}{}", FD_PATH, slave.as_raw_fd()));
+        let path = read_link(path_buf).unwrap_or(PathBuf::from(DEFAULT_DEVICE));
+        let path = path.to_str().unwrap_or(DEFAULT_DEVICE);
+
+        let lc = LoginContext::new(pid, path, &user_name, "127.0.0.1");
+        lc.login();
+
         return Ok(Arc::new(UnixPtySession {
-            inner: Arc::new(Mutex::new(Inner { master, child })),
+            inner: Arc::new(Mutex::new(Inner {
+                master,
+                slave,
+                child,
+            })),
         }));
     }
 }
@@ -155,6 +171,14 @@ impl PtySession for UnixPtySession {
 impl Drop for UnixPtySession {
     fn drop(&mut self) {
         let pid = self.inner.lock().unwrap().child.id() as i32;
+
+        let fd = self.inner.lock().unwrap().slave.as_raw_fd();
+        let path_buf = PathBuf::from(format!("{}{}", FD_PATH, fd));
+        let path = read_link(path_buf).unwrap_or(PathBuf::from(DEFAULT_DEVICE));
+        let path = path.to_str().unwrap_or(DEFAULT_DEVICE);
+        let lc = LoginContext::new(pid, path, "", "127.0.0.1");
+        lc.logout();
+
         BaseCommand::kill_process_group(pid as u32);
         unsafe {
             waitpid(pid, null_mut(), 0);
